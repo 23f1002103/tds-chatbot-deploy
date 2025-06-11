@@ -16,57 +16,48 @@ from langchain.schema import Document
 from dotenv import load_dotenv
 load_dotenv()
 
-# --- Custom Embedding Wrapper (UPDATED for task_type) ---
+# --- Custom Embedding Wrapper (UPDATED for **kwargs) ---
 # This class wraps GoogleGenerativeAIEmbeddings to ensure its output
 # is always a standard Python list of floats, which ChromaDB expects,
-# AND to correctly pass the 'task_type' argument.
+# AND to correctly pass through any unexpected keyword arguments like 'task_type'.
 class CustomGoogleGenerativeAIEmbeddings(GoogleGenerativeAIEmbeddings):
-    def __init__(self, **kwargs: Any):
-        # Pass all kwargs, including 'model' and 'task_type', to the super constructor.
-        # The 'task_type' should be defined when instantiating this class.
-        super().__init__(**kwargs)
+    # No __init__ override needed if we're just passing kwargs to super() and
+    # relying on the parent to handle task_type set during instantiation.
 
-    def embed_documents(self, texts: List[str]) -> List[List[float]]:
-        # The task_type is now set at the class instance level during __init__
-        # and will be used internally by the super().embed_documents call.
-        raw_embeddings = super().embed_documents(texts)
-        
-        # Ensure the overall result is a list of lists of floats
+    def embed_documents(self, texts: List[str], **kwargs: Any) -> List[List[float]]:
+        # The 'task_type' (or any other unexpected keyword argument) is passed by the
+        # underlying LangChain code to this method. We need to accept it in kwargs
+        # and pass it to the super method to prevent TypeError.
+        raw_embeddings = super().embed_documents(texts, **kwargs) # Pass kwargs here
+
         processed_embeddings = []
         for single_embedding_raw in raw_embeddings:
-            # Check if it's already a list/tuple of floats, or a Repeated object that needs conversion
             if isinstance(single_embedding_raw, (list, tuple)):
-                # If it's a nested list like [[...]], flatten it once
                 if len(single_embedding_raw) == 1 and isinstance(single_embedding_raw[0], (list, tuple)):
                     processed_embeddings.append(list(single_embedding_raw[0]))
                 else:
-                    # Assume it's already a flat list of floats or needs direct conversion
                     processed_embeddings.append(list(single_embedding_raw))
             elif hasattr(single_embedding_raw, '__iter__'): # Catches 'Repeated' objects specifically
                 processed_embeddings.append(list(single_embedding_raw))
             else:
-                # Fallback for truly unexpected types; should ideally not be hit
                 raise TypeError(f"Expected iterable for single embedding, but received: {type(single_embedding_raw)}")
         
         return processed_embeddings
 
-    def embed_query(self, text: str) -> List[float]:
-        # The task_type is now set at the class instance level during __init__
-        # and will be used internally by the super().embed_query call.
-        raw_embedding = super().embed_query(text)
+    def embed_query(self, text: str, **kwargs: Any) -> List[float]:
+        # This method in the base class will likely call self.embed_documents
+        # passing 'task_type'. So we just need to ensure its output is flat
+        # and also pass through any kwargs that the super method might expect.
+        raw_embedding = super().embed_query(text, **kwargs) # Pass kwargs here as well
         
-        # Ensure the query embedding is a flat list of floats
         if isinstance(raw_embedding, (list, tuple)):
-            # If it's a nested list like [[...]], flatten it once
             if len(raw_embedding) == 1 and isinstance(raw_embedding[0], (list, tuple)):
                 return list(raw_embedding[0])
             else:
-                # Assume it's already a flat list of floats or needs direct conversion
                 return list(raw_embedding)
         elif hasattr(raw_embedding, '__iter__'): # Catches 'Repeated' objects specifically
             return list(raw_embedding)
         else:
-            # Fallback for truly unexpected types; should ideally not be hit
             raise TypeError(f"Expected iterable for query embedding, but received: {type(raw_embedding)}")
 
 
