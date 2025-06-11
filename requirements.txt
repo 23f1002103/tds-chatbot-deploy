@@ -10,3 +10,4 @@ python-dotenv
 pinecone-client
 langchain-pinecone
 Flask
+chromadb
