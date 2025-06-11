@@ -8,6 +8,53 @@ from langchain_community.vectorstores import Chroma
 from langchain.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
+from typing import List # Import List for type hinting in the custom class
+
+# --- Custom Embedding Wrapper (NEW) ---
+# This class wraps GoogleGenerativeAIEmbeddings to ensure its output
+# is always a standard Python list of floats, which ChromaDB expects.
+class CustomGoogleGenerativeAIEmbeddings(GoogleGenerativeAIEmbeddings):
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        # Call the original embed_documents method from the parent class
+        raw_embeddings = super().embed_documents(texts)
+        
+        # Ensure the overall result is a list of lists of floats
+        processed_embeddings = []
+        for single_embedding_raw in raw_embeddings:
+            # Check if it's already a list/tuple of floats, or a Repeated object that needs conversion
+            if isinstance(single_embedding_raw, (list, tuple)):
+                # If it's a nested list like [[...]] (from previous issues), flatten it once
+                if len(single_embedding_raw) == 1 and isinstance(single_embedding_raw[0], (list, tuple)):
+                    processed_embeddings.append(list(single_embedding_raw[0]))
+                else:
+                    # Assume it's already a flat list of floats or needs direct conversion
+                    processed_embeddings.append(list(single_embedding_raw))
+            elif hasattr(single_embedding_raw, '__iter__'): # Catches 'Repeated' objects specifically
+                processed_embeddings.append(list(single_embedding_raw))
+            else:
+                # Fallback for truly unexpected types; should ideally not be hit
+                raise TypeError(f"Expected iterable for single embedding, but received: {type(single_embedding_raw)}")
+        
+        return processed_embeddings
+
+    def embed_query(self, text: str) -> List[float]:
+        # Call the original embed_query method from the parent class
+        raw_embedding = super().embed_query(text)
+        
+        # Ensure the query embedding is a flat list of floats
+        if isinstance(raw_embedding, (list, tuple)):
+            # If it's a nested list like [[...]] (from previous issues), flatten it once
+            if len(raw_embedding) == 1 and isinstance(raw_embedding[0], (list, tuple)):
+                return list(raw_embedding[0])
+            else:
+                # Assume it's already a flat list of floats or needs direct conversion
+                return list(raw_embedding)
+        elif hasattr(raw_embedding, '__iter__'): # Catches 'Repeated' objects specifically
+            return list(raw_embedding)
+        else:
+            # Fallback for truly unexpected types; should ideally not be hit
+            raise TypeError(f"Expected iterable for query embedding, but received: {type(raw_embedding)}")
+
 
 # --- Flask App Initialization ---
 app = Flask(__name__, template_folder='.')
@@ -32,19 +79,20 @@ def initialize_chatbot_components():
     if not os.getenv("GOOGLE_API_KEY"):
         raise ValueError("GOOGLE_API_KEY environment variable not set. Please set it in your .env file.")
 
-    # 1. Initialize Google Embedding Model
-    print("⏳ Initializing Google embedding model... This might take a moment.")
+    # 1. Initialize Custom Google Embedding Model
+    print("⏳ Initializing Custom Google embedding model...")
     try:
-        embeddings_model = GoogleGenerativeAIEmbeddings(model=GOOGLE_EMBEDDING_MODEL)
+        embeddings_model = CustomGoogleGenerativeAIEmbeddings(model=GOOGLE_EMBEDDING_MODEL) # Use custom wrapper
     except Exception as e:
-        print(f"API Error: Failed to initialize Google Embedding model: {e}")
+        print(f"API Error: Failed to initialize Custom Google Embedding model: {e}")
         raise
 
-    print("✅ Google Embedding model loaded.")
+    print("✅ Custom Google Embedding model loaded.")
 
     # 2. Load ChromaDB
-    print(f"⏳ Loading ChromaDB from {VECTOR_DB_DIR}... This also might take a moment.")
+    print(f"⏳ Loading ChromaDB from {VECTOR_DB_DIR}...")
     try:
+        # Ensure embedding_function uses the custom wrapper
         vectorstore = Chroma(persist_directory=VECTOR_DB_DIR, embedding_function=embeddings_model)
     except Exception as e:
         print(f"API Error: Failed to load ChromaDB: {e}")
@@ -101,50 +149,28 @@ def chat_endpoint():
     print(f"\nReceived API question: '{user_question}'")
 
     try:
-        # Step 1: Explicitly embed the user's question
-        embedding_result = embeddings_model.embed_query(user_question)
-
-        # --- REVISED EMBEDDING PROCESSING LOGIC ---
-        # Ensure the embedding is a standard Python list and is flat.
-        # GoogleGenerativeAIEmbeddings.embed_query can sometimes return a
-        # 'proto.marshal.collections.repeated.Repeated' object or a nested list.
-
-        query_embedding = []
-        if isinstance(embedding_result, (list, tuple)):
-            # If it's already a list or tuple:
-            if len(embedding_result) == 1 and isinstance(embedding_result[0], (list, tuple)):
-                # If it's a list containing a single list (e.g., [[...]]), flatten it
-                query_embedding = list(embedding_result[0])
-            else:
-                # Otherwise, assume it's already a flat list or needs conversion
-                query_embedding = list(embedding_result)
-        elif hasattr(embedding_result, '__iter__'): # Catches 'Repeated' and other iterable non-list types
-            query_embedding = list(embedding_result)
-        else:
-            raise ValueError(f"Unexpected embedding format: {type(embedding_result)}, value: {embedding_result}")
-
-        # Final check to ensure all elements are numbers
-        if not all(isinstance(x, (float, int)) for x in query_embedding):
-             raise ValueError(f"Embedding contains non-numeric elements: {query_embedding}")
-        # --- END REVISED EMBEDDING PROCESSING LOGIC ---
+        # Step 1: The embeddings_model (now CustomGoogleGenerativeAIEmbeddings)
+        # will ensure the query embedding is in the correct format.
+        query_embedding = embeddings_model.embed_query(user_question)
+        
+        # We no longer need the complex type checking here, as the custom wrapper
+        # ensures `query_embedding` is always a flat list of floats.
 
 
-        # Step 3: Perform similarity search using the flattened embedding
-        # We use similarity_search_by_vector which takes the pre-computed embedding
+        # Step 2: Perform similarity search using the flattened embedding
         retrieved_docs = vectorstore.similarity_search_by_vector(
             embedding=query_embedding,
             k=4 # Retrieve 4 relevant documents for context
         )
         print(f"Found {len(retrieved_docs)} relevant documents.")
 
-        # Step 4: Prepare the context for the LLM
-        # Concatenate the page_content of the retrieved documents
+        # Step 3: Prepare the context for the LLM
         context_text = "\n\n---\n\n".join([doc.page_content for doc in retrieved_docs])
         if not context_text:
             context_text = "No specific relevant information found in the knowledge base."
             print("Warning: No context generated from retrieved documents.")
 
-        # Step 5: Format the prompt and invoke the LLM
+        # Step 4: Format the prompt and invoke the LLM
         formatted_prompt = prompt.format(context=context_text, input=user_question)
         print("Invoking LLM with formatted prompt.")
         
@@ -165,7 +191,6 @@ def chat_endpoint():
 
     except Exception as e:
         print(f"Error during API chat processing: {e}")
-        # Log the full traceback if possible for debugging
         import traceback
         traceback.print_exc()
         return jsonify({"error": "An internal server error occurred.", "details": str(e)}), 500
@@ -176,4 +201,3 @@ if __name__ == '__main__':
     print("Frontend will be accessible at: http://127.0.0.1:5000/")
     print("API endpoint at: http://127.0.0.1:5000/chat (POST requests)")
     app.run(host='0.0.0.0', port=5000, debug=True)
-

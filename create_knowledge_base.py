@@ -16,6 +16,52 @@ from langchain.schema import Document
 from dotenv import load_dotenv
 load_dotenv()
 
+# --- Custom Embedding Wrapper (NEW) ---
+# This class wraps GoogleGenerativeAIEmbeddings to ensure its output
+# is always a standard Python list of floats, which ChromaDB expects.
+class CustomGoogleGenerativeAIEmbeddings(GoogleGenerativeAIEmbeddings):
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        # Call the original embed_documents method from the parent class
+        raw_embeddings = super().embed_documents(texts)
+        
+        # Ensure the overall result is a list of lists of floats
+        processed_embeddings = []
+        for single_embedding_raw in raw_embeddings:
+            # Check if it's already a list/tuple of floats, or a Repeated object that needs conversion
+            if isinstance(single_embedding_raw, (list, tuple)):
+                # If it's a nested list like [[...]] (from previous issues), flatten it once
+                if len(single_embedding_raw) == 1 and isinstance(single_embedding_raw[0], (list, tuple)):
+                    processed_embeddings.append(list(single_embedding_raw[0]))
+                else:
+                    # Assume it's already a flat list of floats or needs direct conversion
+                    processed_embeddings.append(list(single_embedding_raw))
+            elif hasattr(single_embedding_raw, '__iter__'): # Catches 'Repeated' objects specifically
+                processed_embeddings.append(list(single_embedding_raw))
+            else:
+                # Fallback for truly unexpected types; should ideally not be hit
+                raise TypeError(f"Expected iterable for single embedding, but received: {type(single_embedding_raw)}")
+        
+        return processed_embeddings
+
+    def embed_query(self, text: str) -> List[float]:
+        # Call the original embed_query method from the parent class
+        raw_embedding = super().embed_query(text)
+        
+        # Ensure the query embedding is a flat list of floats
+        if isinstance(raw_embedding, (list, tuple)):
+            # If it's a nested list like [[...]] (from previous issues), flatten it once
+            if len(raw_embedding) == 1 and isinstance(raw_embedding[0], (list, tuple)):
+                return list(raw_embedding[0])
+            else:
+                # Assume it's already a flat list of floats or needs direct conversion
+                return list(raw_embedding)
+        elif hasattr(raw_embedding, '__iter__'): # Catches 'Repeated' objects specifically
+            return list(raw_embedding)
+        else:
+            # Fallback for truly unexpected types; should ideally not be hit
+            raise TypeError(f"Expected iterable for query embedding, but received: {type(raw_embedding)}")
+
+
 # --- Configuration ---
 DISCOURSE_CLEANED_FILE = "discourse_posts_cleaned.json"
 MARKDOWN_DIR = "markdown_files"
@@ -272,15 +318,16 @@ def create_and_store_knowledge_base():
 
     print(f"✅ Generated {len(all_chunks)} final chunks for embedding.")
 
-    # --- Embedding Generation (using Google) ---
-    print(f"⏳ Initializing Google embedding model: {GOOGLE_EMBEDDING_MODEL}...")
+    # --- Embedding Generation (using the Custom Wrapper) ---
+    print(f"⏳ Initializing Custom Google embedding model: {GOOGLE_EMBEDDING_MODEL}...")
     try:
-        embeddings_model = GoogleGenerativeAIEmbeddings(model=GOOGLE_EMBEDDING_MODEL)
+        # Use the custom wrapper class here!
+        embeddings_model = CustomGoogleGenerativeAIEmbeddings(model=GOOGLE_EMBEDDING_MODEL)
     except Exception as e:
-        print(f"Error initializing Google Embedding model: {e}. Check your GOOGLE_API_KEY and internet connection. Exiting.")
+        print(f"Error initializing Custom Google Embedding model: {e}. Check your GOOGLE_API_KEY and internet connection. Exiting.")
         traceback.print_exc() # Print full traceback
         return
-    print("✅ Google Embedding model loaded.")
+    print("✅ Custom Google Embedding model loaded.")
 
     # --- Vector Database Storage (ChromaDB) ---
     print(f"⏳ Creating or loading ChromaDB at {VECTOR_DB_DIR} and storing embeddings...")
@@ -317,7 +364,7 @@ def create_and_store_knowledge_base():
         print(f"Creating ChromaDB with first batch of {len(all_chunks[0:BATCH_SIZE])} documents.")
         vectorstore = Chroma.from_documents(
             documents=all_chunks[0:BATCH_SIZE],
-            embedding=embeddings_model,
+            embedding=embeddings_model, # Use the wrapped embedding model
             persist_directory=VECTOR_DB_DIR
         )
 
@@ -325,7 +372,7 @@ def create_and_store_knowledge_base():
         for i in tqdm(range(BATCH_SIZE, len(all_chunks), BATCH_SIZE), desc="Adding remaining chunks to ChromaDB"):
             batch = all_chunks[i:i + BATCH_SIZE]
             if batch: # Ensure batch is not empty
-                vectorstore.add_documents(documents=batch)
+                vectorstore.add_documents(documents=batch) # Use the wrapped embedding model implicitly
                 # No need to persist after each add_documents, we'll do it once at the end
 
         vectorstore.persist() # Persist once after all batches are added
