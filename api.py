@@ -6,7 +6,6 @@ from dotenv import load_dotenv
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
 from langchain_community.vectorstores import Chroma
 from langchain.prompts import ChatPromptTemplate
-# Removed create_stuff_documents_chain and create_retrieval_chain as we'll build the flow manually
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
 
@@ -34,7 +33,7 @@ def initialize_chatbot_components():
         raise ValueError("GOOGLE_API_KEY environment variable not set. Please set it in your .env file.")
 
     # 1. Initialize Google Embedding Model
-    print("⏳ Initializing Google embedding model...")
+    print("⏳ Initializing Google embedding model... This might take a moment.")
     try:
         embeddings_model = GoogleGenerativeAIEmbeddings(model=GOOGLE_EMBEDDING_MODEL)
     except Exception as e:
@@ -44,10 +43,9 @@ def initialize_chatbot_components():
     print("✅ Google Embedding model loaded.")
 
     # 2. Load ChromaDB
-    print(f"⏳ Loading ChromaDB from {VECTOR_DB_DIR}...")
+    print(f"⏳ Loading ChromaDB from {VECTOR_DB_DIR}... This also might take a moment.")
     try:
         vectorstore = Chroma(persist_directory=VECTOR_DB_DIR, embedding_function=embeddings_model)
-        # We will not create a retriever directly here, but use vectorstore for manual search
     except Exception as e:
         print(f"API Error: Failed to load ChromaDB: {e}")
         raise
@@ -104,27 +102,31 @@ def chat_endpoint():
 
     try:
         # Step 1: Explicitly embed the user's question
-        # This is where the problematic format might be returned.
-        query_embedding_raw = embeddings_model.embed_query(user_question)
+        embedding_result = embeddings_model.embed_query(user_question)
 
-        # --- NEW LINE ADDED HERE ---
-        # Explicitly convert the Repeated object (if that's what it is) to a standard Python list
-        # This should handle the <class 'proto.marshal.collections.repeated.Repeated'> issue
-        query_embedding_raw = list(query_embedding_raw)
-        # --- END NEW LINE ---
+        # --- REVISED EMBEDDING PROCESSING LOGIC ---
+        # Ensure the embedding is a standard Python list and is flat.
+        # GoogleGenerativeAIEmbeddings.embed_query can sometimes return a
+        # 'proto.marshal.collections.repeated.Repeated' object or a nested list.
 
-        # Step 2: Ensure the embedding is a flattened list of floats
-        # This handles cases where embed_query returns [[...]] instead of [...]
-        if isinstance(query_embedding_raw, list) and \
-           len(query_embedding_raw) == 1 and \
-           isinstance(query_embedding_raw[0], list) and \
-           all(isinstance(x, (float, int)) for x in query_embedding_raw[0]):
-            query_embedding = query_embedding_raw[0]
-        elif isinstance(query_embedding_raw, list) and \
-             all(isinstance(x, (float, int)) for x in query_embedding_raw):
-            query_embedding = query_embedding_raw
+        query_embedding = []
+        if isinstance(embedding_result, (list, tuple)):
+            # If it's already a list or tuple:
+            if len(embedding_result) == 1 and isinstance(embedding_result[0], (list, tuple)):
+                # If it's a list containing a single list (e.g., [[...]]), flatten it
+                query_embedding = list(embedding_result[0])
+            else:
+                # Otherwise, assume it's already a flat list or needs conversion
+                query_embedding = list(embedding_result)
+        elif hasattr(embedding_result, '__iter__'): # Catches 'Repeated' and other iterable non-list types
+            query_embedding = list(embedding_result)
         else:
-            raise ValueError(f"Unexpected embedding format: {type(query_embedding_raw)}, value: {query_embedding_raw}")
+            raise ValueError(f"Unexpected embedding format: {type(embedding_result)}, value: {embedding_result}")
+
+        # Final check to ensure all elements are numbers
+        if not all(isinstance(x, (float, int)) for x in query_embedding):
+             raise ValueError(f"Embedding contains non-numeric elements: {query_embedding}")
+        # --- END REVISED EMBEDDING PROCESSING LOGIC ---
 
 
         # Step 3: Perform similarity search using the flattened embedding
@@ -143,12 +145,9 @@ def chat_endpoint():
             print("Warning: No context generated from retrieved documents.")
 
         # Step 5: Format the prompt and invoke the LLM
-        # We manually apply the prompt template
         formatted_prompt = prompt.format(context=context_text, input=user_question)
         print("Invoking LLM with formatted prompt.")
         
-        # LangChain's LLM runnables are designed for this
-        # We can create a simple chain directly here using our global components
         rag_chain = (
             {"context": lambda x: context_text, "input": RunnablePassthrough()}
             | prompt
@@ -177,3 +176,4 @@ if __name__ == '__main__':
     print("Frontend will be accessible at: http://127.0.0.1:5000/")
     print("API endpoint at: http://127.0.0.1:5000/chat (POST requests)")
     app.run(host='0.0.0.0', port=5000, debug=True)
+
