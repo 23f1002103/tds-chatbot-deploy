@@ -107,6 +107,12 @@ def chat_endpoint():
         # This is where the problematic format might be returned.
         query_embedding_raw = embeddings_model.embed_query(user_question)
 
+        # --- NEW LINE ADDED HERE ---
+        # Explicitly convert the Repeated object (if that's what it is) to a standard Python list
+        # This should handle the <class 'proto.marshal.collections.repeated.Repeated'> issue
+        query_embedding_raw = list(query_embedding_raw)
+        # --- END NEW LINE ---
+
         # Step 2: Ensure the embedding is a flattened list of floats
         # This handles cases where embed_query returns [[...]] instead of [...]
         if isinstance(query_embedding_raw, list) and \
@@ -140,9 +146,6 @@ def chat_endpoint():
         # We manually apply the prompt template
         formatted_prompt = prompt.format(context=context_text, input=user_question)
         print("Invoking LLM with formatted prompt.")
-        # Note: ChatGoogleGenerativeAI's invoke method takes a list of messages or a string
-        # If it expects a string, it will likely be the formatted prompt.
-        # If it expects messages, we'd need to wrap it. For now, assume string.
         
         # LangChain's LLM runnables are designed for this
         # We can create a simple chain directly here using our global components
