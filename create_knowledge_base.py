@@ -16,12 +16,19 @@ from langchain.schema import Document
 from dotenv import load_dotenv
 load_dotenv()
 
-# --- Custom Embedding Wrapper (NEW) ---
+# --- Custom Embedding Wrapper (UPDATED for task_type) ---
 # This class wraps GoogleGenerativeAIEmbeddings to ensure its output
-# is always a standard Python list of floats, which ChromaDB expects.
+# is always a standard Python list of floats, which ChromaDB expects,
+# AND to correctly pass the 'task_type' argument.
 class CustomGoogleGenerativeAIEmbeddings(GoogleGenerativeAIEmbeddings):
+    def __init__(self, **kwargs: Any):
+        # Pass all kwargs, including 'model' and 'task_type', to the super constructor.
+        # The 'task_type' should be defined when instantiating this class.
+        super().__init__(**kwargs)
+
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
-        # Call the original embed_documents method from the parent class
+        # The task_type is now set at the class instance level during __init__
+        # and will be used internally by the super().embed_documents call.
         raw_embeddings = super().embed_documents(texts)
         
         # Ensure the overall result is a list of lists of floats
@@ -29,7 +36,7 @@ class CustomGoogleGenerativeAIEmbeddings(GoogleGenerativeAIEmbeddings):
         for single_embedding_raw in raw_embeddings:
             # Check if it's already a list/tuple of floats, or a Repeated object that needs conversion
             if isinstance(single_embedding_raw, (list, tuple)):
-                # If it's a nested list like [[...]] (from previous issues), flatten it once
+                # If it's a nested list like [[...]], flatten it once
                 if len(single_embedding_raw) == 1 and isinstance(single_embedding_raw[0], (list, tuple)):
                     processed_embeddings.append(list(single_embedding_raw[0]))
                 else:
@@ -44,12 +51,13 @@ class CustomGoogleGenerativeAIEmbeddings(GoogleGenerativeAIEmbeddings):
         return processed_embeddings
 
     def embed_query(self, text: str) -> List[float]:
-        # Call the original embed_query method from the parent class
+        # The task_type is now set at the class instance level during __init__
+        # and will be used internally by the super().embed_query call.
         raw_embedding = super().embed_query(text)
         
         # Ensure the query embedding is a flat list of floats
         if isinstance(raw_embedding, (list, tuple)):
-            # If it's a nested list like [[...]] (from previous issues), flatten it once
+            # If it's a nested list like [[...]], flatten it once
             if len(raw_embedding) == 1 and isinstance(raw_embedding[0], (list, tuple)):
                 return list(raw_embedding[0])
             else:
@@ -68,6 +76,10 @@ MARKDOWN_DIR = "markdown_files"
 VECTOR_DB_DIR = "chroma_db"
 
 GOOGLE_EMBEDDING_MODEL = "models/embedding-001"
+# Define task types for different embedding uses
+TASK_TYPE_DOCUMENT = "retrieval_document"
+TASK_TYPE_QUERY = "retrieval_query" # While not directly used here, good to have for consistency
+
 if not os.getenv("GOOGLE_API_KEY"):
     raise ValueError("GOOGLE_API_KEY environment variable not set. Please set it before running.")
 
@@ -319,10 +331,13 @@ def create_and_store_knowledge_base():
     print(f"✅ Generated {len(all_chunks)} final chunks for embedding.")
 
     # --- Embedding Generation (using the Custom Wrapper) ---
-    print(f"⏳ Initializing Custom Google embedding model: {GOOGLE_EMBEDDING_MODEL}...")
+    print(f"⏳ Initializing Custom Google embedding model: {GOOGLE_EMBEDDING_MODEL} with task_type='{TASK_TYPE_DOCUMENT}'...")
     try:
-        # Use the custom wrapper class here!
-        embeddings_model = CustomGoogleGenerativeAIEmbeddings(model=GOOGLE_EMBEDDING_MODEL)
+        # Use the custom wrapper class and pass the task_type
+        embeddings_model = CustomGoogleGenerativeAIEmbeddings(
+            model=GOOGLE_EMBEDDING_MODEL, 
+            task_type=TASK_TYPE_DOCUMENT # Specify task_type for document embedding
+        )
     except Exception as e:
         print(f"Error initializing Custom Google Embedding model: {e}. Check your GOOGLE_API_KEY and internet connection. Exiting.")
         traceback.print_exc() # Print full traceback

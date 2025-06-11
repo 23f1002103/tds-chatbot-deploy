@@ -8,14 +8,21 @@ from langchain_community.vectorstores import Chroma
 from langchain.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
-from typing import List # Import List for type hinting in the custom class
+from typing import List, Any # Import List and Any for type hinting in the custom class
 
-# --- Custom Embedding Wrapper (NEW) ---
+# --- Custom Embedding Wrapper (UPDATED for task_type) ---
 # This class wraps GoogleGenerativeAIEmbeddings to ensure its output
-# is always a standard Python list of floats, which ChromaDB expects.
+# is always a standard Python list of floats, which ChromaDB expects,
+# AND to correctly pass the 'task_type' argument.
 class CustomGoogleGenerativeAIEmbeddings(GoogleGenerativeAIEmbeddings):
+    def __init__(self, **kwargs: Any):
+        # Pass all kwargs, including 'model' and 'task_type', to the super constructor.
+        # The 'task_type' should be defined when instantiating this class.
+        super().__init__(**kwargs)
+
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
-        # Call the original embed_documents method from the parent class
+        # The task_type is now set at the class instance level during __init__
+        # and will be used internally by the super().embed_documents call.
         raw_embeddings = super().embed_documents(texts)
         
         # Ensure the overall result is a list of lists of floats
@@ -23,7 +30,7 @@ class CustomGoogleGenerativeAIEmbeddings(GoogleGenerativeAIEmbeddings):
         for single_embedding_raw in raw_embeddings:
             # Check if it's already a list/tuple of floats, or a Repeated object that needs conversion
             if isinstance(single_embedding_raw, (list, tuple)):
-                # If it's a nested list like [[...]] (from previous issues), flatten it once
+                # If it's a nested list like [[...]], flatten it once
                 if len(single_embedding_raw) == 1 and isinstance(single_embedding_raw[0], (list, tuple)):
                     processed_embeddings.append(list(single_embedding_raw[0]))
                 else:
@@ -38,12 +45,13 @@ class CustomGoogleGenerativeAIEmbeddings(GoogleGenerativeAIEmbeddings):
         return processed_embeddings
 
     def embed_query(self, text: str) -> List[float]:
-        # Call the original embed_query method from the parent class
+        # The task_type is now set at the class instance level during __init__
+        # and will be used internally by the super().embed_query call.
         raw_embedding = super().embed_query(text)
         
         # Ensure the query embedding is a flat list of floats
         if isinstance(raw_embedding, (list, tuple)):
-            # If it's a nested list like [[...]] (from previous issues), flatten it once
+            # If it's a nested list like [[...]], flatten it once
             if len(raw_embedding) == 1 and isinstance(raw_embedding[0], (list, tuple)):
                 return list(raw_embedding[0])
             else:
@@ -65,6 +73,10 @@ VECTOR_DB_DIR = "chroma_db"
 GOOGLE_EMBEDDING_MODEL = "models/embedding-001"
 GOOGLE_LLM_MODEL = "gemini-1.5-flash"
 
+# Define task types for different embedding uses
+TASK_TYPE_DOCUMENT = "retrieval_document"
+TASK_TYPE_QUERY = "retrieval_query"
+
 # --- Global Components (Initialized once when the API starts) ---
 embeddings_model = None
 vectorstore = None
@@ -79,10 +91,13 @@ def initialize_chatbot_components():
     if not os.getenv("GOOGLE_API_KEY"):
         raise ValueError("GOOGLE_API_KEY environment variable not set. Please set it in your .env file.")
 
-    # 1. Initialize Custom Google Embedding Model
-    print("⏳ Initializing Custom Google embedding model...")
+    # 1. Initialize Custom Google Embedding Model for Querying
+    print(f"⏳ Initializing Custom Google embedding model for queries: {GOOGLE_EMBEDDING_MODEL} with task_type='{TASK_TYPE_QUERY}'...")
     try:
-        embeddings_model = CustomGoogleGenerativeAIEmbeddings(model=GOOGLE_EMBEDDING_MODEL) # Use custom wrapper
+        embeddings_model = CustomGoogleGenerativeAIEmbeddings(
+            model=GOOGLE_EMBEDDING_MODEL,
+            task_type=TASK_TYPE_QUERY # Specify task_type for query embedding
+        )
     except Exception as e:
         print(f"API Error: Failed to initialize Custom Google Embedding model: {e}")
         raise
@@ -93,6 +108,7 @@ def initialize_chatbot_components():
     print(f"⏳ Loading ChromaDB from {VECTOR_DB_DIR}...")
     try:
         # Ensure embedding_function uses the custom wrapper
+        # Chroma expects the embedding_function to be capable of both embed_documents and embed_query
         vectorstore = Chroma(persist_directory=VECTOR_DB_DIR, embedding_function=embeddings_model)
     except Exception as e:
         print(f"API Error: Failed to load ChromaDB: {e}")
@@ -149,14 +165,10 @@ def chat_endpoint():
     print(f"\nReceived API question: '{user_question}'")
 
     try:
-        # Step 1: The embeddings_model (now CustomGoogleGenerativeAIEmbeddings)
+        # Step 1: The embeddings_model (now CustomGoogleGenerativeAIEmbeddings with task_type)
         # will ensure the query embedding is in the correct format.
         query_embedding = embeddings_model.embed_query(user_question)
         
-        # We no longer need the complex type checking here, as the custom wrapper
-        # ensures `query_embedding` is always a flat list of floats.
-
-
         # Step 2: Perform similarity search using the flattened embedding
         retrieved_docs = vectorstore.similarity_search_by_vector(
             embedding=query_embedding,
