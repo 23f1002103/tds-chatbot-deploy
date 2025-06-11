@@ -11,3 +11,4 @@ pinecone-client
 langchain-pinecone
 Flask
 chromadb
+hnswlib
