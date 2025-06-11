@@ -6,6 +6,7 @@ from collections import defaultdict
 from typing import List, Dict, Any
 from tqdm import tqdm
 import shutil
+import traceback # Import traceback for detailed error logging
 
 from langchain_community.document_loaders import DirectoryLoader, TextLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
@@ -232,17 +233,26 @@ def load_markdown_documents(directory: str) -> List[Document]:
 
 # --- Main Process ---
 def create_and_store_knowledge_base():
+    print("--- Initializing Knowledge Base Creation ---")
+
     # Define consistent chunking parameters
     GLOBAL_CHUNK_SIZE = 400
     GLOBAL_CHUNK_OVERLAP = 80
 
     # Load initial documents from both sources
-    discourse_docs = load_discourse_documents(DISCOURSE_CLEANED_FILE)
-    markdown_docs = load_markdown_documents(MARKDOWN_DIR)
+    discourse_docs_full = load_discourse_documents(DISCOURSE_CLEANED_FILE)
+    markdown_docs_full = load_markdown_documents(MARKDOWN_DIR)
+
+    # --- TEMPORARY: LIMIT DATASET SIZE FOR TESTING ON RENDER ---
+    discourse_docs = discourse_docs_full[:5] # Process only the first 5 Discourse documents
+    markdown_docs = markdown_docs_full[:5]   # Process only the first 5 Markdown documents
+    print(f"DEBUG: Temporarily limiting Discourse documents to {len(discourse_docs)} for testing.")
+    print(f"DEBUG: Temporarily limiting Markdown documents to {len(markdown_docs)} for testing.")
+    # --- END TEMPORARY LIMIT ---
 
     all_raw_documents = discourse_docs + markdown_docs
     if not all_raw_documents:
-        print("No documents loaded from any source. Exiting.")
+        print("No documents loaded from any source (after temporary limiting). Exiting.")
         return
     print(f"Total raw documents loaded (before splitting): {len(all_raw_documents)}")
 
@@ -265,10 +275,10 @@ def create_and_store_knowledge_base():
     # --- Embedding Generation (using Google) ---
     print(f"⏳ Initializing Google embedding model: {GOOGLE_EMBEDDING_MODEL}...")
     try:
-        # 'chunk_size' parameter removed as it's not supported by your version
         embeddings_model = GoogleGenerativeAIEmbeddings(model=GOOGLE_EMBEDDING_MODEL)
     except Exception as e:
         print(f"Error initializing Google Embedding model: {e}. Check your GOOGLE_API_KEY and internet connection. Exiting.")
+        traceback.print_exc() # Print full traceback
         return
     print("✅ Google Embedding model loaded.")
 
@@ -282,32 +292,48 @@ def create_and_store_knowledge_base():
             shutil.rmtree(VECTOR_DB_DIR)
             print("Successfully deleted old ChromaDB.")
         except OSError as e:
-            print(f"Error deleting old ChromaDB: {e}. Please delete it manually if issues persist.")
+            print(f"Error deleting old ChromaDB: {e}. This might indicate a permission issue or a locked file. Please try deleting manually if issues persist locally.")
+            traceback.print_exc() # Print full traceback
+            # Do not exit, try to proceed, but log the error
 
     # Ensure the directory exists before persisting, especially after deletion
     os.makedirs(VECTOR_DB_DIR, exist_ok=True)
 
     # --- MANUAL BATCHING FOR CHROMA INGESTION ---
-    BATCH_SIZE = 90 # Google API limit is 100, so use slightly less to be safe
+    BATCH_SIZE = 50 # Let's try a smaller batch size to be safer.
     print(f"⏳ Storing {len(all_chunks)} chunks in ChromaDB in batches of {BATCH_SIZE}...")
 
     vectorstore = None
     try:
-        # Initialize an empty Chroma vectorstore first
-        # Note: We use embedding_function for an empty vectorstore init
-        vectorstore = Chroma(embedding_function=embeddings_model, persist_directory=VECTOR_DB_DIR)
+        # For the first batch, use Chroma.from_documents to initialize the vectorstore.
+        # This function handles the initial creation and adding the first set of docs.
+        # It also implicitly persists the initial state.
+        
+        # Ensure there's at least one chunk to process
+        if not all_chunks:
+            print("No chunks to add to ChromaDB. Skipping vectorstore creation.")
+            return
 
-        for i in tqdm(range(0, len(all_chunks), BATCH_SIZE), desc="Adding chunks to ChromaDB"):
+        print(f"Creating ChromaDB with first batch of {len(all_chunks[0:BATCH_SIZE])} documents.")
+        vectorstore = Chroma.from_documents(
+            documents=all_chunks[0:BATCH_SIZE],
+            embedding=embeddings_model,
+            persist_directory=VECTOR_DB_DIR
+        )
+
+        # Add remaining batches if any
+        for i in tqdm(range(BATCH_SIZE, len(all_chunks), BATCH_SIZE), desc="Adding remaining chunks to ChromaDB"):
             batch = all_chunks[i:i + BATCH_SIZE]
-            vectorstore.add_documents(documents=batch)
-            # No need to persist after each add_documents, we'll do it once at the end
+            if batch: # Ensure batch is not empty
+                vectorstore.add_documents(documents=batch)
+                # No need to persist after each add_documents, we'll do it once at the end
 
         vectorstore.persist() # Persist once after all batches are added
-        print("✅ Vector database created and saved.")
+        print("✅ Vector database created and saved successfully.")
     except Exception as e:
-        print(f"Error creating/persisting ChromaDB: {e}. Check your embeddings model and network connection. Exiting.")
-        return
-    # --- END OF NEW MANUAL BATCHING CODE ---
+        print(f"\nError during ChromaDB creation/persistence: {e}")
+        traceback.print_exc() # Print full traceback
+        return # Exit if ChromaDB creation failed
 
     print("\nKnowledge base creation complete! You can now use this vector database for retrieval.")
 
