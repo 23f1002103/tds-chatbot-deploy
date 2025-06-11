@@ -1,0 +1,11 @@
+langchain==0.1.20
+langchain-core
+langchain-google-genai # <-- ADD THIS LINE
+google-generativeai # You can keep this if you also use the direct client, but langchain-google-genai is what rag_pipeline.py needs
+beautifulsoup4
+markdownify
+fastapi
+uvicorn
+python-dotenv
+pinecone-client
+langchain-pinecone
