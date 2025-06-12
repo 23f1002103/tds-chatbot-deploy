@@ -16,20 +16,10 @@ from langchain.schema import Document
 from dotenv import load_dotenv
 load_dotenv()
 
-# --- Custom Embedding Wrapper (UPDATED for **kwargs) ---
-# This class wraps GoogleGenerativeAIEmbeddings to ensure its output
-# is always a standard Python list of floats, which ChromaDB expects,
-# AND to correctly pass through any unexpected keyword arguments like 'task_type'.
+# --- Custom Embedding Wrapper (Keep this exactly as is) ---
 class CustomGoogleGenerativeAIEmbeddings(GoogleGenerativeAIEmbeddings):
-    # No __init__ override needed if we're just passing kwargs to super() and
-    # relying on the parent to handle task_type set during instantiation.
-
     def embed_documents(self, texts: List[str], **kwargs: Any) -> List[List[float]]:
-        # The 'task_type' (or any other unexpected keyword argument) is passed by the
-        # underlying LangChain code to this method. We need to accept it in kwargs
-        # and pass it to the super method to prevent TypeError.
-        raw_embeddings = super().embed_documents(texts, **kwargs) # Pass kwargs here
-
+        raw_embeddings = super().embed_documents(texts, **kwargs)
         processed_embeddings = []
         for single_embedding_raw in raw_embeddings:
             if isinstance(single_embedding_raw, (list, tuple)):
@@ -37,25 +27,20 @@ class CustomGoogleGenerativeAIEmbeddings(GoogleGenerativeAIEmbeddings):
                     processed_embeddings.append(list(single_embedding_raw[0]))
                 else:
                     processed_embeddings.append(list(single_embedding_raw))
-            elif hasattr(single_embedding_raw, '__iter__'): # Catches 'Repeated' objects specifically
+            elif hasattr(single_embedding_raw, '__iter__'):
                 processed_embeddings.append(list(single_embedding_raw))
             else:
                 raise TypeError(f"Expected iterable for single embedding, but received: {type(single_embedding_raw)}")
-        
         return processed_embeddings
 
     def embed_query(self, text: str, **kwargs: Any) -> List[float]:
-        # This method in the base class will likely call self.embed_documents
-        # passing 'task_type'. So we just need to ensure its output is flat
-        # and also pass through any kwargs that the super method might expect.
-        raw_embedding = super().embed_query(text, **kwargs) # Pass kwargs here as well
-        
+        raw_embedding = super().embed_query(text, **kwargs)
         if isinstance(raw_embedding, (list, tuple)):
             if len(raw_embedding) == 1 and isinstance(raw_embedding[0], (list, tuple)):
                 return list(raw_embedding[0])
             else:
                 return list(raw_embedding)
-        elif hasattr(raw_embedding, '__iter__'): # Catches 'Repeated' objects specifically
+        elif hasattr(raw_embedding, '__iter__'):
             return list(raw_embedding)
         else:
             raise TypeError(f"Expected iterable for query embedding, but received: {type(raw_embedding)}")
@@ -67,14 +52,13 @@ MARKDOWN_DIR = "markdown_files"
 VECTOR_DB_DIR = "chroma_db"
 
 GOOGLE_EMBEDDING_MODEL = "models/embedding-001"
-# Define task types for different embedding uses
 TASK_TYPE_DOCUMENT = "retrieval_document"
-TASK_TYPE_QUERY = "retrieval_query" # While not directly used here, good to have for consistency
+TASK_TYPE_QUERY = "retrieval_query"
 
 if not os.getenv("GOOGLE_API_KEY"):
     raise ValueError("GOOGLE_API_KEY environment variable not set. Please set it before running.")
 
-# --- Helper functions for Discourse subthread processing ---
+# --- Helper functions for Discourse subthread processing (unchanged) ---
 def clean_text(text):
     """Basic text cleaning for consistency."""
     if text is None:
@@ -88,7 +72,6 @@ def build_reply_map(posts):
     reply_map = defaultdict(list)
     posts_by_number = {}
     for post in posts:
-        # Ensure essential keys are present for robust processing
         if "post_number" not in post or "topic_id" not in post:
             print(f"Warning: Skipping malformed post due to missing essential keys (post_number/topic_id): {post.get('post_id', 'N/A')}")
             continue
@@ -104,7 +87,7 @@ def extract_subthread(root_post_number, reply_map, posts_by_number):
     collected = []
     def dfs(post_num):
         post = posts_by_number.get(post_num)
-        if not post: # Handle case where post_num might not exist in map
+        if not post:
             return
         collected.append(post)
         for child in reply_map.get(post_num, []):
@@ -112,7 +95,7 @@ def extract_subthread(root_post_number, reply_map, posts_by_number):
     dfs(root_post_number)
     return collected
 
-# --- Document Loading (Initial Documents - NOT yet chunked) ---
+# --- Document Loading (Initial Documents - NOT yet chunked) (unchanged) ---
 
 def load_discourse_documents(file_path: str) -> List[Document]:
     """
@@ -126,18 +109,18 @@ def load_discourse_documents(file_path: str) -> List[Document]:
     except FileNotFoundError:
         print(f"Error: {file_path} not found. Please ensure the discourse scraper and cleaner have run.")
         return []
-    except json.JSONDecodeError: # Handle corrupt JSON
+    except json.JSONDecodeError:
         print(f"Error: {file_path} is not a valid JSON file. Please check its content.")
         return []
 
-    if not posts_data: # Handle empty JSON file
+    if not posts_data:
         print(f"Warning: {file_path} is empty or contains no posts.")
         return []
 
     topics = {}
     for post in posts_data:
         topic_id = post.get("topic_id")
-        if topic_id is None: # Handle posts missing topic_id
+        if topic_id is None:
             print(f"Warning: Skipping post {post.get('post_id', 'N/A')} due to missing topic_id.")
             continue
         if topic_id not in topics:
@@ -145,23 +128,19 @@ def load_discourse_documents(file_path: str) -> List[Document]:
         topics[topic_id]["posts"].append(post)
 
     for topic_id in topics:
-        topics[topic_id]["posts"].sort(key=lambda p: p.get("post_number", 0)) # Robust sort
+        topics[topic_id]["posts"].sort(key=lambda p: p.get("post_number", 0))
 
     print(f"Loaded {len(posts_data)} posts across {len(topics)} topics from Discourse.")
 
-    discourse_documents = [] # Will hold LangChain Document objects for each subthread
+    discourse_documents = []
     for topic_id, topic_data in tqdm(topics.items(), desc="Combining Discourse subthreads"):
         posts = topic_data["posts"]
         topic_title = topic_data["topic_title"]
 
-        # Ensure there are posts to process for the topic
         if not posts:
             continue
 
         reply_map, posts_by_number = build_reply_map(posts)
-
-        # Identify actual root posts (those with no reply_to_post_number AND are not replies to non-existent posts)
-        # Filter root posts more carefully
         all_post_numbers = set(p["post_number"] for p in posts)
         actual_root_posts = [
             p for p in posts
@@ -173,7 +152,7 @@ def load_discourse_documents(file_path: str) -> List[Document]:
             root_num = root_post["post_number"]
             subthread_posts = extract_subthread(root_num, reply_map, posts_by_number)
 
-            if not subthread_posts: # Skip if subthread extraction fails
+            if not subthread_posts:
                 continue
 
             combined_text = f"Topic title: {topic_title}\n\n"
@@ -181,20 +160,19 @@ def load_discourse_documents(file_path: str) -> List[Document]:
                 clean_text(p["content"]) for p in subthread_posts
             )
 
-            # Robust date parsing with default
             first_post_created_at = subthread_posts[0].get('created_at', '')
             if first_post_created_at:
                 try:
                     first_post_created_at = datetime.fromisoformat(first_post_created_at.replace('Z', '+00:00')).isoformat()
                 except ValueError:
-                    first_post_created_at = '' # Fallback if format is bad
+                    first_post_created_at = ''
 
             last_post_updated_at = subthread_posts[-1].get('updated_at', '')
             if last_post_updated_at:
                 try:
                     last_post_updated_at = datetime.fromisoformat(last_post_updated_at.replace('Z', '+00:00')).isoformat()
                 except ValueError:
-                    last_post_updated_at = '' # Fallback if format is bad
+                    last_post_updated_at = ''
 
             metadata = {
                 "source": "discourse_forum",
@@ -205,7 +183,6 @@ def load_discourse_documents(file_path: str) -> List[Document]:
                 "first_post_created_at": first_post_created_at,
                 "last_post_updated_at": last_post_updated_at
             }
-            # Add all post_ids and post_numbers from this subthread to metadata
             metadata["post_ids_in_subthread"] = ",".join(map(str, [p.get("post_id", "N/A") for p in subthread_posts]))
             metadata["post_numbers_in_subthread"] = ",".join(map(str, [p.get("post_number", "N/A") for p in subthread_posts]))
 
@@ -244,7 +221,6 @@ def load_markdown_documents(directory: str) -> List[Document]:
         frontmatter = {}
         main_content = doc.page_content # Default to full content if no frontmatter
 
-        # Robust frontmatter parsing (basic)
         if content_lines and content_lines[0].strip() == '---':
             frontmatter_started = False
             content_start_line = 0
@@ -257,21 +233,20 @@ def load_markdown_documents(directory: str) -> List[Document]:
                         break
                 elif frontmatter_started and ':' in line:
                     key, value = line.split(':', 1)
-                    frontmatter[key.strip()] = value.strip().strip('"') # Remove quotes
+                    frontmatter[key.strip()] = value.strip().strip('"')
 
             main_content = "\n".join(content_lines[content_start_line:]).strip()
 
-        # Handle empty main_content after stripping
         if not main_content:
             print(f"Warning: Markdown file {doc.metadata.get('source', 'unknown')} has empty content after frontmatter removal.")
-            continue # Skip if content is empty
+            continue
 
         processed_doc = Document(
             page_content=main_content,
             metadata={
                 "source": "course_material",
-                "url": frontmatter.get('original_url', doc.metadata.get('source', '')), # Fallback to default source
-                "title": frontmatter.get('title', os.path.basename(doc.metadata.get('source', '')).replace(".md", "")), # Clean title
+                "url": frontmatter.get('original_url', doc.metadata.get('source', '')),
+                "title": frontmatter.get('title', os.path.basename(doc.metadata.get('source', '')).replace(".md", "")),
                 "downloaded_at": frontmatter.get('downloaded_at', datetime.now().isoformat())
             }
         )
@@ -292,16 +267,16 @@ def create_and_store_knowledge_base():
     discourse_docs_full = load_discourse_documents(DISCOURSE_CLEANED_FILE)
     markdown_docs_full = load_markdown_documents(MARKDOWN_DIR)
 
-    # --- TEMPORARY: LIMIT DATASET SIZE FOR TESTING ON RENDER ---
-    discourse_docs = discourse_docs_full[:5] # Process only the first 5 Discourse documents
-    markdown_docs = markdown_docs_full[:5]   # Process only the first 5 Markdown documents
-    print(f"DEBUG: Temporarily limiting Discourse documents to {len(discourse_docs)} for testing.")
-    print(f"DEBUG: Temporarily limiting Markdown documents to {len(markdown_docs)} for testing.")
-    # --- END TEMPORARY LIMIT ---
+    # --- REMOVED: TEMPORARY LIMIT DATASET SIZE FOR LOCAL TESTING ---
+    # discourse_docs = discourse_docs_full[:5]
+    # markdown_docs = markdown_docs_full[:5]
+    # print(f"DEBUG: Temporarily limiting Discourse documents to {len(discourse_docs)} for testing.")
+    # print(f"DEBUG: Temporarily limiting Markdown documents to {len(markdown_docs)} for testing.")
+    # --- END REMOVED ---
 
-    all_raw_documents = discourse_docs + markdown_docs
+    all_raw_documents = discourse_docs_full + markdown_docs_full # Use full datasets
     if not all_raw_documents:
-        print("No documents loaded from any source (after temporary limiting). Exiting.")
+        print("No documents loaded from any source. Exiting.")
         return
     print(f"Total raw documents loaded (before splitting): {len(all_raw_documents)}")
 
@@ -324,14 +299,13 @@ def create_and_store_knowledge_base():
     # --- Embedding Generation (using the Custom Wrapper) ---
     print(f"⏳ Initializing Custom Google embedding model: {GOOGLE_EMBEDDING_MODEL} with task_type='{TASK_TYPE_DOCUMENT}'...")
     try:
-        # Use the custom wrapper class and pass the task_type
         embeddings_model = CustomGoogleGenerativeAIEmbeddings(
             model=GOOGLE_EMBEDDING_MODEL, 
             task_type=TASK_TYPE_DOCUMENT # Specify task_type for document embedding
         )
     except Exception as e:
         print(f"Error initializing Custom Google Embedding model: {e}. Check your GOOGLE_API_KEY and internet connection. Exiting.")
-        traceback.print_exc() # Print full traceback
+        traceback.print_exc()
         return
     print("✅ Custom Google Embedding model loaded.")
 
@@ -345,24 +319,16 @@ def create_and_store_knowledge_base():
             shutil.rmtree(VECTOR_DB_DIR)
             print("Successfully deleted old ChromaDB.")
         except OSError as e:
-            print(f"Error deleting old ChromaDB: {e}. This might indicate a permission issue or a locked file. Please try deleting manually if issues persist locally.")
-            traceback.print_exc() # Print full traceback
-            # Do not exit, try to proceed, but log the error
+            print(f"Error deleting old ChromaDB: {e}. Please delete it manually if issues persist.")
+            traceback.print_exc()
 
-    # Ensure the directory exists before persisting, especially after deletion
     os.makedirs(VECTOR_DB_DIR, exist_ok=True)
 
-    # --- MANUAL BATCHING FOR CHROMA INGESTION ---
-    BATCH_SIZE = 50 # Let's try a smaller batch size to be safer.
+    BATCH_SIZE = 50 # Google API limit is 100, so use slightly less to be safe
     print(f"⏳ Storing {len(all_chunks)} chunks in ChromaDB in batches of {BATCH_SIZE}...")
 
     vectorstore = None
     try:
-        # For the first batch, use Chroma.from_documents to initialize the vectorstore.
-        # This function handles the initial creation and adding the first set of docs.
-        # It also implicitly persists the initial state.
-        
-        # Ensure there's at least one chunk to process
         if not all_chunks:
             print("No chunks to add to ChromaDB. Skipping vectorstore creation.")
             return
@@ -370,25 +336,24 @@ def create_and_store_knowledge_base():
         print(f"Creating ChromaDB with first batch of {len(all_chunks[0:BATCH_SIZE])} documents.")
         vectorstore = Chroma.from_documents(
             documents=all_chunks[0:BATCH_SIZE],
-            embedding=embeddings_model, # Use the wrapped embedding model
+            embedding=embeddings_model,
             persist_directory=VECTOR_DB_DIR
         )
 
-        # Add remaining batches if any
         for i in tqdm(range(BATCH_SIZE, len(all_chunks), BATCH_SIZE), desc="Adding remaining chunks to ChromaDB"):
             batch = all_chunks[i:i + BATCH_SIZE]
-            if batch: # Ensure batch is not empty
-                vectorstore.add_documents(documents=batch) # Use the wrapped embedding model implicitly
-                # No need to persist after each add_documents, we'll do it once at the end
+            if batch:
+                vectorstore.add_documents(documents=batch)
 
-        vectorstore.persist() # Persist once after all batches are added
+        vectorstore.persist()
         print("✅ Vector database created and saved successfully.")
     except Exception as e:
         print(f"\nError during ChromaDB creation/persistence: {e}")
-        traceback.print_exc() # Print full traceback
-        return # Exit if ChromaDB creation failed
+        traceback.print_exc()
+        return
 
     print("\nKnowledge base creation complete! You can now use this vector database for retrieval.")
 
 if __name__ == "__main__":
     create_and_store_knowledge_base()
+

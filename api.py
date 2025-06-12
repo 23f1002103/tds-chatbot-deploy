@@ -10,20 +10,10 @@ from langchain_core.runnables import RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
 from typing import List, Any # Import List and Any for type hinting in the custom class
 
-# --- Custom Embedding Wrapper (UPDATED for **kwargs) ---
-# This class wraps GoogleGenerativeAIEmbeddings to ensure its output
-# is always a standard Python list of floats, which ChromaDB expects,
-# AND to correctly pass through any unexpected keyword arguments like 'task_type'.
+# --- Custom Embedding Wrapper (Keep this exactly as is) ---
 class CustomGoogleGenerativeAIEmbeddings(GoogleGenerativeAIEmbeddings):
-    # No __init__ override needed if we're just passing kwargs to super() and
-    # relying on the parent to handle task_type set during instantiation.
-
     def embed_documents(self, texts: List[str], **kwargs: Any) -> List[List[float]]:
-        # The 'task_type' (or any other unexpected keyword argument) is passed by the
-        # underlying LangChain code to this method. We need to accept it in kwargs
-        # and pass it to the super method to prevent TypeError.
-        raw_embeddings = super().embed_documents(texts, **kwargs) # Pass kwargs here
-
+        raw_embeddings = super().embed_documents(texts, **kwargs)
         processed_embeddings = []
         for single_embedding_raw in raw_embeddings:
             if isinstance(single_embedding_raw, (list, tuple)):
@@ -31,25 +21,20 @@ class CustomGoogleGenerativeAIEmbeddings(GoogleGenerativeAIEmbeddings):
                     processed_embeddings.append(list(single_embedding_raw[0]))
                 else:
                     processed_embeddings.append(list(single_embedding_raw))
-            elif hasattr(single_embedding_raw, '__iter__'): # Catches 'Repeated' objects specifically
+            elif hasattr(single_embedding_raw, '__iter__'):
                 processed_embeddings.append(list(single_embedding_raw))
             else:
                 raise TypeError(f"Expected iterable for single embedding, but received: {type(single_embedding_raw)}")
-        
         return processed_embeddings
 
     def embed_query(self, text: str, **kwargs: Any) -> List[float]:
-        # This method in the base class will likely call self.embed_documents
-        # passing 'task_type'. So we just need to ensure its output is flat
-        # and also pass through any kwargs that the super method might expect.
-        raw_embedding = super().embed_query(text, **kwargs) # Pass kwargs here as well
-        
+        raw_embedding = super().embed_query(text, **kwargs)
         if isinstance(raw_embedding, (list, tuple)):
             if len(raw_embedding) == 1 and isinstance(raw_embedding[0], (list, tuple)):
                 return list(raw_embedding[0])
             else:
                 return list(raw_embedding)
-        elif hasattr(raw_embedding, '__iter__'): # Catches 'Repeated' objects specifically
+        elif hasattr(raw_embedding, '__iter__'):
             return list(raw_embedding)
         else:
             raise TypeError(f"Expected iterable for query embedding, but received: {type(raw_embedding)}")
@@ -64,7 +49,6 @@ VECTOR_DB_DIR = "chroma_db"
 GOOGLE_EMBEDDING_MODEL = "models/embedding-001"
 GOOGLE_LLM_MODEL = "gemini-1.5-flash"
 
-# Define task types for different embedding uses
 TASK_TYPE_DOCUMENT = "retrieval_document"
 TASK_TYPE_QUERY = "retrieval_query"
 
@@ -72,7 +56,7 @@ TASK_TYPE_QUERY = "retrieval_query"
 embeddings_model = None
 vectorstore = None
 llm = None
-prompt = None # Storing prompt globally as it's static
+prompt = None
 
 def initialize_chatbot_components():
     global embeddings_model, vectorstore, llm, prompt
@@ -82,12 +66,11 @@ def initialize_chatbot_components():
     if not os.getenv("GOOGLE_API_KEY"):
         raise ValueError("GOOGLE_API_KEY environment variable not set. Please set it in your .env file.")
 
-    # 1. Initialize Custom Google Embedding Model for Querying
     print(f"⏳ Initializing Custom Google embedding model for queries: {GOOGLE_EMBEDDING_MODEL} with task_type='{TASK_TYPE_QUERY}'...")
     try:
         embeddings_model = CustomGoogleGenerativeAIEmbeddings(
             model=GOOGLE_EMBEDDING_MODEL,
-            task_type=TASK_TYPE_QUERY # Specify task_type for query embedding
+            task_type=TASK_TYPE_QUERY
         )
     except Exception as e:
         print(f"API Error: Failed to initialize Custom Google Embedding model: {e}")
@@ -95,18 +78,14 @@ def initialize_chatbot_components():
 
     print("✅ Custom Google Embedding model loaded.")
 
-    # 2. Load ChromaDB
     print(f"⏳ Loading ChromaDB from {VECTOR_DB_DIR}...")
     try:
-        # Ensure embedding_function uses the custom wrapper
-        # Chroma expects the embedding_function to be capable of both embed_documents and embed_query
         vectorstore = Chroma(persist_directory=VECTOR_DB_DIR, embedding_function=embeddings_model)
     except Exception as e:
         print(f"API Error: Failed to load ChromaDB: {e}")
         raise
     print("✅ ChromaDB loaded.")
 
-    # 3. Initialize Google LLM
     print(f"⏳ Initializing Google LLM: {GOOGLE_LLM_MODEL}...")
     try:
         llm = ChatGoogleGenerativeAI(model=GOOGLE_LLM_MODEL, temperature=0.3)
@@ -115,7 +94,6 @@ def initialize_chatbot_components():
         raise
     print("✅ Google LLM loaded.")
 
-    # 4. Define the Prompt Template (stored globally)
     prompt = ChatPromptTemplate.from_template("""
     Answer the user's question based on the provided context.
     If you don't know the answer based on the context, politely state that you don't have enough information.
@@ -129,17 +107,14 @@ def initialize_chatbot_components():
     """)
     print("✅ Prompt template defined.")
 
-# Initialize components when the Flask app starts
 with app.app_context():
     initialize_chatbot_components()
 
-# --- Route to serve the HTML frontend ---
 @app.route('/')
 def serve_frontend():
     """Serves the main chatbot HTML page."""
     return render_template('index.html')
 
-# --- API Endpoint ---
 @app.route('/chat', methods=['POST'])
 def chat_endpoint():
     """
@@ -156,24 +131,19 @@ def chat_endpoint():
     print(f"\nReceived API question: '{user_question}'")
 
     try:
-        # Step 1: The embeddings_model (now CustomGoogleGenerativeAIEmbeddings with task_type)
-        # will ensure the query embedding is in the correct format.
         query_embedding = embeddings_model.embed_query(user_question)
         
-        # Step 2: Perform similarity search using the flattened embedding
         retrieved_docs = vectorstore.similarity_search_by_vector(
             embedding=query_embedding,
-            k=4 # Retrieve 4 relevant documents for context
+            k=4
         )
         print(f"Found {len(retrieved_docs)} relevant documents.")
 
-        # Step 3: Prepare the context for the LLM
         context_text = "\n\n---\n\n".join([doc.page_content for doc in retrieved_docs])
         if not context_text:
             context_text = "No specific relevant information found in the knowledge base."
             print("Warning: No context generated from retrieved documents.")
 
-        # Step 4: Format the prompt and invoke the LLM
         formatted_prompt = prompt.format(context=context_text, input=user_question)
         print("Invoking LLM with formatted prompt.")
         
@@ -181,7 +151,7 @@ def chat_endpoint():
             {"context": lambda x: context_text, "input": RunnablePassthrough()}
             | prompt
             | llm
-            | StrOutputParser() # Ensure output is a string
+            | StrOutputParser()
         )
         
         bot_answer = rag_chain.invoke(user_question)
@@ -198,7 +168,6 @@ def chat_endpoint():
         traceback.print_exc()
         return jsonify({"error": "An internal server error occurred.", "details": str(e)}), 500
 
-# --- Run the Flask App ---
 if __name__ == '__main__':
     print("\n--- Starting Flask API Server ---")
     print("Frontend will be accessible at: http://127.0.0.1:5000/")
