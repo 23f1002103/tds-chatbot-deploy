@@ -8,7 +8,7 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Google Fonts: Inter for general text, Poppins for titles -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Poppins:wght@600;700&display=swap" rel="stylesheet">
-    <!-- Font Awesome for Send Icon -->
+    <!-- Font Awesome for Icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
     <style>
         body {
@@ -78,11 +78,16 @@
         }
         .chat-input-area {
             display: flex;
+            flex-direction: column; /* Stack input and image preview vertically */
             padding: 1.25rem; /* More padding */
             border-top: 1px solid #e5e7eb;
             background-color: #ffffff;
-            gap: 1rem; /* More space between input and button */
             border-radius: 0 0 1.5rem 1.5rem; /* Match container border-radius */
+        }
+        .input-controls {
+            display: flex;
+            gap: 1rem; /* More space between input and button */
+            align-items: center; /* Align items in the center */
         }
         .chat-input {
             flex-grow: 1;
@@ -138,6 +143,84 @@
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
+        
+        /* New styles for image upload and preview */
+        .image-upload-area {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            margin-top: 1rem;
+            padding: 0.75rem;
+            border: 1px dashed #cbd5e1;
+            border-radius: 0.75rem;
+            background-color: #f8fafc;
+            justify-content: space-between; /* Space out content within the area */
+        }
+        .image-upload-area label {
+            cursor: pointer;
+            color: #4F46E5;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .image-preview-container {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            max-width: 70%; /* Limit preview container width */
+        }
+        .image-preview {
+            max-width: 60px;
+            max-height: 60px;
+            border-radius: 0.5rem;
+            object-fit: cover;
+            border: 1px solid #e2e8f0;
+        }
+        .clear-image-button {
+            background-color: #ef4444; /* Red color for clear */
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            font-size: 0.75rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: background-color 0.2s ease-in-out;
+        }
+        .clear-image-button:hover {
+            background-color: #dc2626;
+        }
+        .hidden {
+            display: none;
+        }
+
+        /* Styles for links */
+        .message-links {
+            margin-top: 0.75rem;
+            padding-top: 0.5rem;
+            border-top: 1px dashed #e2e8f0;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            font-size: 0.8rem;
+            color: #64748b; /* Gray text for links section */
+        }
+        .message-links a {
+            color: #4F46E5; /* Primary color for links */
+            text-decoration: none;
+            padding: 0.25rem 0.5rem;
+            background-color: #e0f2fe; /* Light blue background for link bubbles */
+            border-radius: 0.5rem;
+            transition: background-color 0.2s ease-in-out;
+        }
+        .message-links a:hover {
+            background-color: #bfdbfe; /* Slightly darker blue on hover */
+            text-decoration: underline;
+        }
 
         /* Responsive adjustments */
         @media (max-width: 768px) {
@@ -163,12 +246,26 @@
                 padding: 1rem;
                 border-radius: 0 0 0.75rem 0.75rem;
             }
+            .input-controls {
+                flex-direction: column;
+                gap: 0.75rem;
+            }
             .send-button {
                 width: 100%;
                 padding: 0.75rem 1rem;
             }
+            .chat-input {
+                width: 100%; /* Ensure input takes full width */
+            }
             .message-bubble {
                 max-width: 90%;
+            }
+            .image-upload-area {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+            .image-preview-container {
+                max-width: 100%; /* Allow full width on small screens */
             }
         }
     </style>
@@ -185,11 +282,28 @@
             </div>
         </div>
         <div class="chat-input-area">
-            <input type="text" id="user-input" class="chat-input" placeholder="Ask a question..." autofocus>
-            <button id="send-button" class="send-button">
-                <span id="button-text">Send</span>
-                <div id="loading-spinner" class="spinner hidden"></div>
-            </button>
+            <!-- Image Preview and Clear Button -->
+            <div id="image-preview-area" class="image-preview-area hidden">
+                <div class="image-preview-container">
+                    <img id="image-preview" src="#" alt="Image Preview" class="image-preview">
+                    <span id="image-file-name" class="text-sm text-gray-600 truncate"></span>
+                </div>
+                <button id="clear-image-button" class="clear-image-button" title="Clear image">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+
+            <div class="input-controls">
+                <label for="image-upload" class="cursor-pointer text-indigo-700 hover:text-indigo-900 transition-colors duration-200">
+                    <i class="fas fa-image text-lg mr-2"></i> Upload Image
+                </label>
+                <input type="file" id="image-upload" accept="image/*" class="hidden">
+                <input type="text" id="user-input" class="chat-input" placeholder="Ask a question..." autofocus>
+                <button id="send-button" class="send-button">
+                    <span id="button-text">Send</span>
+                    <div id="loading-spinner" class="spinner hidden"></div>
+                </button>
+            </div>
         </div>
     </div>
 
@@ -199,9 +313,16 @@
         const sendButton = document.getElementById('send-button');
         const buttonText = document.getElementById('button-text');
         const loadingSpinner = document.getElementById('loading-spinner');
+        const imageUpload = document.getElementById('image-upload');
+        const imagePreviewArea = document.getElementById('image-preview-area');
+        const imagePreview = document.getElementById('image-preview');
+        const imageFileName = document.getElementById('image-file-name');
+        const clearImageButton = document.getElementById('clear-image-button');
+
+        let selectedImageBase64 = null; // Stores the base64 encoded image
 
         // Function to append a message to the chat
-        function appendMessage(sender, text) {
+        function appendMessage(sender, text, links = []) {
             const messageDiv = document.createElement('div');
             messageDiv.classList.add('message-bubble');
             if (sender === 'user') {
@@ -211,20 +332,45 @@
             }
             messageDiv.textContent = text;
             chatMessages.appendChild(messageDiv);
+
+            // Append links if available (only for bot messages)
+            if (sender === 'bot' && links.length > 0) {
+                const linksDiv = document.createElement('div');
+                linksDiv.classList.add('message-links');
+                linksDiv.innerHTML = '<span class="mr-2">Sources:</span>';
+                links.forEach(link => {
+                    const a = document.createElement('a');
+                    a.href = link.url;
+                    a.textContent = link.text;
+                    a.target = '_blank'; // Open links in new tab
+                    a.rel = 'noopener noreferrer'; // Security best practice
+                    linksDiv.appendChild(a);
+                });
+                messageDiv.appendChild(linksDiv);
+            }
+
             chatMessages.scrollTop = chatMessages.scrollHeight; // Auto-scroll to bottom
         }
 
         // Function to handle sending message
         async function sendMessage() {
             const question = userInput.value.trim();
-            if (!question) return;
+            if (!question && !selectedImageBase64) {
+                alert('Please enter a question or select an image.'); // Using alert() for user immediate feedback, this should be replaced with a custom modal in production.
+                return;
+            }
 
-            appendMessage('user', question);
+            appendMessage('user', question || 'Image sent'); // Show user message, even if only image
             userInput.value = ''; // Clear input field
 
             sendButton.disabled = true;
             buttonText.textContent = 'Thinking...';
             loadingSpinner.classList.remove('hidden');
+
+            const payload = { question: question };
+            if (selectedImageBase64) {
+                payload.image = selectedImageBase64;
+            }
 
             try {
                 // Flask serves on the same origin, so relative path works
@@ -233,7 +379,7 @@
                     headers: {
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({ question: question })
+                    body: JSON.stringify(payload)
                 });
 
                 if (!response.ok) {
@@ -242,7 +388,7 @@
                 }
 
                 const data = await response.json();
-                appendMessage('bot', data.answer);
+                appendMessage('bot', data.answer, data.links);
 
             } catch (error) {
                 console.error('Error sending message:', error);
@@ -251,11 +397,41 @@
                 sendButton.disabled = false;
                 buttonText.textContent = 'Send';
                 loadingSpinner.classList.add('hidden');
+                clearImagePreview(); // Clear image after sending
                 userInput.focus(); // Focus input after response
             }
         }
 
-        // Event listeners
+        // Function to handle image file selection and preview
+        imageUpload.addEventListener('change', (event) => {
+            const file = event.target.files[0];
+            if (file) {
+                imageFileName.textContent = file.name;
+                imagePreviewArea.classList.remove('hidden');
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    imagePreview.src = e.target.result;
+                    selectedImageBase64 = e.target.result.split(',')[1]; // Get base64 string
+                };
+                reader.readAsDataURL(file);
+            } else {
+                clearImagePreview();
+            }
+        });
+
+        // Function to clear image preview
+        function clearImagePreview() {
+            imagePreview.src = '#';
+            imageFileName.textContent = '';
+            selectedImageBase64 = null;
+            imageUpload.value = ''; // Clear the file input
+            imagePreviewArea.classList.add('hidden');
+        }
+
+        // Event listener for clear image button
+        clearImageButton.addEventListener('click', clearImagePreview);
+
+        // Event listeners for sending message
         sendButton.addEventListener('click', sendMessage);
         userInput.addEventListener('keypress', (event) => {
             if (event.key === 'Enter' && !sendButton.disabled) {
@@ -265,6 +441,9 @@
 
         // Focus input on page load
         userInput.focus();
+
+        // Initial message to align with project spec
+        appendMessage('bot', 'Hello! How can I help you with the Tools in Data Science course today?');
     </script>
 </body>
 </html>

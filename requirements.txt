@@ -12,3 +12,5 @@ langchain-pinecone
 Flask
 chromadb
 hnswlib
+orjson
+Pillow
