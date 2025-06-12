@@ -277,7 +277,7 @@
         </div>
         <div class="chat-input-area">
             <!-- Image Preview and Clear Button -->
-            <div id="image-preview-area" class="image-preview-area hidden">
+            <div id="image-preview-area" class="image-upload-area hidden"> <!-- Corrected class here -->
                 <div class="image-preview-container">
                     <img id="image-preview" src="#" alt="Image Preview" class="image-preview">
                     <span id="image-file-name" class="text-sm text-gray-600 truncate"></span>
@@ -350,10 +350,7 @@
         async function sendMessage() {
             const question = userInput.value.trim();
             if (!question && !selectedImageBase64) {
-                // IMPORTANT: Replace alert() with a custom modal UI for production environments
                 console.warn('Please enter a question or select an image.');
-                // Example of a custom modal (conceptual, needs implementation):
-                // showCustomModal('Please enter a question or select an image.', 'Warning');
                 return;
             }
 
