@@ -257,9 +257,6 @@
             .chat-input {
                 width: 100%; /* Ensure input takes full width */
             }
-            .message-bubble {
-                max-width: 90%;
-            }
             .image-upload-area {
                 flex-direction: column;
                 align-items: flex-start;
@@ -276,10 +273,7 @@
             <i class="fas fa-robot mr-2"></i> TDS Virtual TA
         </div>
         <div class="chat-messages flex flex-col flex-grow p-4 space-y-3" id="chat-messages">
-            <!-- Initial bot message -->
-            <div class="message-bubble bot-message self-start">
-                Hello! How can I help you with the Tools in Data Science course today?
-            </div>
+            <!-- Initial bot message handled by JS for consistency -->
         </div>
         <div class="chat-input-area">
             <!-- Image Preview and Clear Button -->
@@ -356,7 +350,10 @@
         async function sendMessage() {
             const question = userInput.value.trim();
             if (!question && !selectedImageBase64) {
-                alert('Please enter a question or select an image.'); // Using alert() for user immediate feedback, this should be replaced with a custom modal in production.
+                // IMPORTANT: Replace alert() with a custom modal UI for production environments
+                console.warn('Please enter a question or select an image.');
+                // Example of a custom modal (conceptual, needs implementation):
+                // showCustomModal('Please enter a question or select an image.', 'Warning');
                 return;
             }
 
@@ -411,7 +408,8 @@
                 const reader = new FileReader();
                 reader.onload = (e) => {
                     imagePreview.src = e.target.result;
-                    selectedImageBase64 = e.target.result.split(',')[1]; // Get base64 string
+                    // Get base64 string without the "data:image/jpeg;base64," prefix
+                    selectedImageBase64 = e.target.result.split(',')[1]; 
                 };
                 reader.readAsDataURL(file);
             } else {
@@ -442,7 +440,7 @@
         // Focus input on page load
         userInput.focus();
 
-        // Initial message to align with project spec
+        // Initial bot message on load for a friendly start
         appendMessage('bot', 'Hello! How can I help you with the Tools in Data Science course today?');
     </script>
 </body>
