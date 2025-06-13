@@ -222,8 +222,8 @@
 #     app.run(host='0.0.0.0', port=5000, debug=True)
 
 import os
-from flask import Flask, request, jsonify, render_template
-from flask_cors import CORS # Import CORS
+from flask import Flask, request, jsonify, render_template, make_response # Import make_response
+from flask_cors import CORS
 from dotenv import load_dotenv
 import base64
 from io import BytesIO
@@ -243,7 +243,7 @@ from typing import List, Any
 # --- Custom Embedding Wrapper ---
 class CustomGoogleGenerativeAIEmbeddings(GoogleGenerativeAIEmbeddings):
     def embed_documents(self, texts: List[str], **kwargs: Any) -> List[List[float]]:
-        print("DEBUG: Entering embed_documents for embedding.") # DEBUG PRINT
+        print("DEBUG: Entering embed_documents for embedding.")
         raw_embeddings = super().embed_documents(texts, **kwargs)
         processed_embeddings = []
         for single_embedding_raw in raw_embeddings:
@@ -256,11 +256,11 @@ class CustomGoogleGenerativeAIEmbeddings(GoogleGenerativeAIEmbeddings):
                 processed_embeddings.append(list(single_embedding_raw))
             else:
                 raise TypeError(f"Expected iterable for single embedding, but received: {type(single_embedding_raw)}")
-        print("DEBUG: Finished embed_documents.") # DEBUG PRINT
+        print("DEBUG: Finished embed_documents.")
         return processed_embeddings
 
     def embed_query(self, text: str, **kwargs: Any) -> List[float]:
-        print(f"DEBUG: Entering embed_query for text: {text[:50]}...") # DEBUG PRINT
+        print(f"DEBUG: Entering embed_query for text: {text[:50]}...")
         raw_embedding = super().embed_query(text, **kwargs)
         if isinstance(raw_embedding, (list, tuple)):
             if len(raw_embedding) == 1 and isinstance(raw_embedding[0], (list, tuple)):
@@ -271,7 +271,7 @@ class CustomGoogleGenerativeAIEmbeddings(GoogleGenerativeAIEmbeddings):
             return list(raw_embedding)
         else:
             raise TypeError(f"Expected iterable for query embedding, but received: {type(raw_embedding)}")
-        print("DEBUG: Finished embed_query.") # DEBUG PRINT
+        print("DEBUG: Finished embed_query.")
 
 
 # --- Flask App Initialization ---
@@ -343,46 +343,48 @@ def initialize_chatbot_components():
     {input}
     """)
     print("✅ Prompt template defined.")
-    print("DEBUG: Chatbot components initialization complete.") # DEBUG PRINT
+    print("DEBUG: Chatbot components initialization complete.")
 
 with app.app_context():
     initialize_chatbot_components()
 
 @app.route('/')
 def serve_frontend():
-    print("DEBUG: Serving frontend (GET /)") # DEBUG PRINT
+    print("DEBUG: Serving frontend (GET /)")
     return render_template('index.html')
 
 @app.route('/', methods=['POST'])
 def root_post_endpoint():
-    print("DEBUG: POST request received at root (/)") # DEBUG PRINT
+    print("DEBUG: POST request received at root (/)")
     return chat_endpoint()
 
 @app.route('/chat', methods=['POST'])
 def chat_endpoint():
-    print("DEBUG: Entering chat_endpoint (POST /chat)") # DEBUG PRINT
+    print("DEBUG: Entering chat_endpoint (POST /chat)")
     user_data = request.get_json()
 
     if not user_data or 'question' not in user_data:
-        print("DEBUG: Invalid request: no question found.") # DEBUG PRINT
-        return jsonify({"error": "Invalid request: Please provide a 'question' in the JSON body."}), 400
+        print("DEBUG: Invalid request: no question found.")
+        response = make_response(jsonify({"error": "Invalid request: Please provide a 'question' in the JSON body."}), 400)
+        response.headers['Content-Type'] = 'application/json' # Explicitly set
+        return response
 
     user_question = user_data.get('question')
     base64_image = user_data.get('image')
-    print(f"DEBUG: Received API question: '{user_question}'") # DEBUG PRINT
+    print(f"DEBUG: Received API question: '{user_question}'")
     if base64_image:
-        print("DEBUG: Image data received in request.") # DEBUG PRINT
+        print("DEBUG: Image data received in request.")
 
     try:
-        print("DEBUG: Starting query embedding.") # DEBUG PRINT
+        print("DEBUG: Starting query embedding.")
         query_embedding = embeddings_model.embed_query(user_question)
-        print("DEBUG: Query embedding complete. Starting similarity search.") # DEBUG PRINT
+        print("DEBUG: Query embedding complete. Starting similarity search.")
         
         retrieved_docs = vectorstore.similarity_search_by_vector(
             embedding=query_embedding,
             k=4
         )
-        print(f"DEBUG: Found {len(retrieved_docs)} relevant documents.") # DEBUG PRINT
+        print(f"DEBUG: Found {len(retrieved_docs)} relevant documents.")
 
         context_text = "\n\n---\n\n".join([doc.page_content for doc in retrieved_docs])
         links = []
@@ -394,27 +396,27 @@ def chat_endpoint():
 
         if not context_text:
             context_text = "No specific relevant information found in the knowledge base."
-            print("DEBUG: Warning: No context generated from retrieved documents.") # DEBUG PRINT
+            print("DEBUG: Warning: No context generated from retrieved documents.")
 
         prompt_parts = []
         if base64_image:
-            print("DEBUG: Processing image for multimodal input.") # DEBUG PRINT
+            print("DEBUG: Processing image for multimodal input.")
             try:
                 image_data = base64.b64decode(base64_image)
                 image_stream = BytesIO(image_data)
                 img = Image.open(image_stream)
                 
                 prompt_parts.append(img)
-                print("DEBUG: Successfully processed image for multimodal input.") # DEBUG PRINT
+                print("DEBUG: Successfully processed image for multimodal input.")
 
             except Exception as img_e:
-                print(f"DEBUG: Error processing image: {img_e}") # DEBUG PRINT
+                print(f"DEBUG: Error processing image: {img_e}")
                 prompt_parts.append(f"Error processing image: {img_e}. Proceeding with text only.")
 
         prompt_content = prompt.format(context=context_text, input=user_question)
         prompt_parts.append(prompt_content)
         
-        print("DEBUG: Invoking Multimodal LLM with prompt parts.") # DEBUG PRINT
+        print("DEBUG: Invoking Multimodal LLM with prompt parts.")
         model_multimodal = genai.GenerativeModel(GOOGLE_LLM_MODEL)
         
         generation_config = {"temperature": 0.3}
@@ -433,26 +435,32 @@ def chat_endpoint():
                 request_options={"timeout": 25}
             )
             bot_answer = response.text
-            print("DEBUG: LLM responded successfully.") # DEBUG PRINT
+            print("DEBUG: LLM responded successfully.")
         except Exception as llm_e:
-            print(f"DEBUG: Error invoking multimodal LLM: {llm_e}") # DEBUG PRINT
+            print(f"DEBUG: Error invoking multimodal LLM: {llm_e}")
             bot_answer = f"I apologize, I encountered an issue processing your request: {llm_e}. Please try again later."
             links = [] 
 
-        print("DEBUG: Preparing JSON response.") # DEBUG PRINT
-        return jsonify({
+        print("DEBUG: Preparing JSON response.")
+        response_data = {
             "answer": bot_answer,
             "links": links
-        }), 200
+        }
+        response = make_response(jsonify(response_data), 200)
+        response.headers['Content-Type'] = 'application/json' # Explicitly set
+        # response.headers['Access-Control-Allow-Origin'] = '*' # Optional: If CORS issues persist for promptfoo specifically
+        return response
 
     except Exception as e:
-        print(f"DEBUG: Top-level error during API chat processing: {e}") # DEBUG PRINT
+        print(f"DEBUG: Top-level error during API chat processing: {e}")
         traceback.print_exc()
-        return jsonify({"error": "An internal server error occurred.", "details": str(e), "links": []}), 500
+        error_response_data = {"error": "An internal server error occurred.", "details": str(e), "links": []}
+        response = make_response(jsonify(error_response_data), 500)
+        response.headers['Content-Type'] = 'application/json' # Explicitly set
+        return response
 
 if __name__ == '__main__':
     print("\n--- Starting Flask API Server ---")
     print("Frontend will be accessible at: http://127.0.0.1:5000/")
     print("API endpoint at: http://127.0.0.1:5000/chat (POST requests), also root '/' for promptfoo")
     app.run(host='0.0.0.0', port=5000, debug=True)
-
