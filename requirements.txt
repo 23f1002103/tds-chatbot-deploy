@@ -1,5 +1,6 @@
 langchain
 langchain-core
+langchain-community
 python-dotenv
 Pillow
 beautifulsoup4
