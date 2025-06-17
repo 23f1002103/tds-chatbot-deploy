@@ -1,17 +1,14 @@
-langchain==0.1.20
+langchain
 langchain-core
-langchain-google-genai # <-- ADD THIS LINE
-google-generativeai # You can keep this if you also use the direct client, but langchain-google-genai is what rag_pipeline.py needs
+python-dotenv
+Pillow
 beautifulsoup4
 markdownify
-fastapi
-uvicorn
-python-dotenv
-pinecone-client
-langchain-pinecone
-Flask
 chromadb
-hnswlib
-orjson
-Pillow
-Flask-Cors
+
+# NEW library for the AI Proxy (OpenAI compatible)
+langchain-openai
+
+# NEW libraries for the FastAPI web server
+fastapi
+uvicorn[standard]
