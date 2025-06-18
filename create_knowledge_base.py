@@ -5,37 +5,40 @@ from tqdm import tqdm
 from langchain.schema import Document
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
-from langchain_openai import OpenAIEmbeddings # IMPORTANT: Using the OpenAI library
+from langchain_openai import OpenAIEmbeddings
 from langchain_community.document_loaders import DirectoryLoader, TextLoader
 from datetime import datetime
 from dotenv import load_dotenv
 
-# This will load OPENAI_API_KEY and OPENAI_BASE_URL from your .env file
-load_dotenv() 
+# Import the base openai library to create a direct client
+import openai
 
-# --- Configuration ---
+# --- Load Environment Variables ---
+load_dotenv()
+
+# --- Configuration for AI Proxy ---
+AIPROXY_KEY = os.getenv("OPENAI_API_KEY") 
+AIPROXY_URL = os.getenv("OPENAI_BASE_URL") 
+EMBEDDING_MODEL = "text-embedding-3-small"
+VECTOR_DB_DIR = "chroma_db"
 DISCOURSE_CLEANED_FILE = "discourse_posts_cleaned.json"
 MARKDOWN_DIR = "markdown_files"
-VECTOR_DB_DIR = "chroma_db"
-# This model name is compatible with the AI Pipe proxy
-EMBEDDING_MODEL = "text-embedding-3-small"
 
-# Note: We no longer need the CustomGoogleGenerativeAIEmbeddings class
+if not AIPROXY_KEY or not AIPROXY_URL:
+    raise ValueError("OPENAI_API_KEY and OPENAI_BASE_URL must be set in your .env file.")
 
+# --- Helper functions (no changes needed) ---
 def clean_text(text: str) -> str:
-    """Basic text cleaning for consistency."""
-    if text is None:
-        return ""
+    if text is None: return ""
     return " ".join(text.strip().split())
 
 def load_discourse_documents(file_path: str) -> list[Document]:
-    """Loads cleaned Discourse posts and creates a separate LangChain Document for EACH post."""
     print(f"Loading and processing each Discourse post from {file_path} individually...")
     try:
         with open(file_path, "r", encoding="utf-8") as f:
             posts_data = json.load(f)
     except FileNotFoundError:
-        print(f"Error: {file_path} not found. Please ensure scraper has run.")
+        print(f"Error: {file_path} not found.")
         return []
     
     discourse_documents = []
@@ -45,7 +48,7 @@ def load_discourse_documents(file_path: str) -> list[Document]:
         page_content = f"Forum Topic: {topic_title}\n\nUser '{post.get('username', 'N/A')}' wrote:\n{post_content}"
         
         post_url = post.get('url', '')
-        if not post_url: # Construct URL if it's missing
+        if not post_url:
             post_url = f"https://discourse.onlinedegree.iitm.ac.in/t/{post.get('topic_slug', '')}/{post.get('topic_id', '')}/{post.get('post_number', '')}"
         
         metadata = {
@@ -59,84 +62,42 @@ def load_discourse_documents(file_path: str) -> list[Document]:
     return discourse_documents
 
 def load_markdown_documents(directory: str) -> list[Document]:
-    """Loads Markdown files and processes their frontmatter."""
     print(f"Loading Markdown files from {directory} into initial documents...")
     try:
-        loader = DirectoryLoader(
-            directory,
-            glob="**/*.md",
-            loader_cls=TextLoader,
-            loader_kwargs={"encoding": "utf-8", "autodetect_encoding": True}
-        )
+        loader = DirectoryLoader(directory, glob="**/*.md", loader_cls=TextLoader, loader_kwargs={"encoding": "utf-8"})
         docs = loader.load()
+        print(f"✅ Loaded {len(docs)} markdown documents.")
+        return docs
     except Exception as e:
-        print(f"Error loading Markdown files from {directory}: {e}")
+        print(f"Error loading markdown files: {e}")
         return []
 
-    print(f"Loaded {len(docs)} raw Markdown documents.")
-
-    markdown_documents = []
-    for doc in docs:
-        content_lines = doc.page_content.split('\n')
-        frontmatter = {}
-        main_content = doc.page_content
-
-        if content_lines and content_lines[0].strip() == '---':
-            # This logic parses metadata from the top of the markdown file
-            frontmatter_started = False
-            content_start_line = 0
-            for i, line in enumerate(content_lines):
-                if line.strip() == '---':
-                    if not frontmatter_started:
-                        frontmatter_started = True
-                    else:
-                        content_start_line = i + 1
-                        break
-                elif frontmatter_started and ':' in line:
-                    key, value = line.split(':', 1)
-                    frontmatter[key.strip()] = value.strip().strip('"')
-            main_content = "\n".join(content_lines[content_start_line:]).strip()
-
-        if not main_content:
-            continue
-
-        processed_doc = Document(
-            page_content=main_content,
-            metadata={
-                "source": "course_material",
-                "url": frontmatter.get('original_url', doc.metadata.get('source', '')),
-                "title": frontmatter.get('title', os.path.basename(doc.metadata.get('source', '')).replace(".md", "")),
-                "downloaded_at": frontmatter.get('downloaded_at', datetime.now().isoformat())
-            }
-        )
-        markdown_documents.append(processed_doc)
-
-    print(f"✅ Generated {len(markdown_documents)} initial Markdown documents.")
-    return markdown_documents
-
+# --- Main Process ---
 def create_and_store_knowledge_base():
     """Main function to build and store the vector database."""
-    print("--- Creating Knowledge Base using AI Pipe Proxy ---")
+    print("--- Creating Knowledge Base using AI Pipe Proxy (Direct Client Method) ---")
     
-    # 1. Load all documents
     all_raw_documents = load_discourse_documents(DISCOURSE_CLEANED_FILE) + load_markdown_documents(MARKDOWN_DIR)
 
-    if not all_raw_documents:
-        print("No documents were loaded. Exiting.")
-        return
-
-    # 2. Split documents into smaller chunks
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=400, chunk_overlap=80)
     all_chunks = text_splitter.split_documents(all_raw_documents)
     print(f"✅ Generated {len(all_chunks)} final chunks for embedding.")
 
-    # 3. Initialize the OpenAI Embeddings model. 
-    # It will AUTOMATICALLY use the OPENAI_API_KEY and OPENAI_BASE_URL from your .env file.
-    print(f"⏳ Initializing OpenAI embedding model '{EMBEDDING_MODEL}' via AI Pipe...")
-    embeddings_model = OpenAIEmbeddings(model=EMBEDDING_MODEL)
-    print("✅ OpenAI Embedding model loaded successfully.")
+    # THIS IS THE NEW PART: Manually create the OpenAI client
+    print(f"⏳ Manually creating client for AI Pipe at {AIPROXY_URL}...")
+    client = openai.OpenAI(
+        api_key=AIPROXY_KEY,
+        base_url=AIPROXY_URL,
+    )
+    print("✅ Client created.")
 
-    # 4. Delete old database and create a new one
+    # Now, pass this pre-configured client to the LangChain wrapper
+    embeddings_model = OpenAIEmbeddings(
+        model=EMBEDDING_MODEL,
+        client=client  # Pass the manually created client
+    )
+    print("✅ OpenAI Embedding model wrapper configured.")
+
     if os.path.exists(VECTOR_DB_DIR):
         print(f"⚠️ Deleting existing ChromaDB directory: {VECTOR_DB_DIR}")
         shutil.rmtree(VECTOR_DB_DIR)
