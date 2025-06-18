@@ -4,7 +4,7 @@ providers:
   - id: http
     config:
       # This points to your API. Change to your Render URL for final submission.
-      url: http://localhost:5000/chat 
+      url: http://localhost:5000/chat
       method: POST
       headers:
         Content-Type: application/json
