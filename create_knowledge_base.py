@@ -79,6 +79,24 @@ def create_and_store_knowledge_base():
     """Main function to build and store the vector database."""
     print("--- Creating Knowledge Base using AI Pipe Proxy (Standard Method) ---")
     
+    # --- START: DEBUGGING CODE TO CHECK FOR FILES ---
+    print("\n[DEBUG] Checking for source files on the server...")
+    if os.path.exists(MARKDOWN_DIR):
+        try:
+            markdown_file_list = os.listdir(MARKDOWN_DIR)
+            print(f"[DEBUG] Found {len(markdown_file_list)} files in markdown_files/: {markdown_file_list}")
+        except Exception as e:
+            print(f"[DEBUG] Error listing files in markdown_files/: {e}")
+    else:
+        print("[DEBUG] CRITICAL ERROR: The 'markdown_files/' directory was NOT FOUND.")
+
+    if os.path.exists(DISCOURSE_CLEANED_FILE):
+        print(f"[DEBUG] The file '{DISCOURSE_CLEANED_FILE}' was found.")
+    else:
+        print(f"[DEBUG] CRITICAL ERROR: The file '{DISCOURSE_CLEANED_FILE}' was NOT FOUND.")
+    print("[DEBUG] End of file check.\n")
+    # --- END: DEBUGGING CODE ---
+
     # 1. Load all documents
     all_raw_documents = load_discourse_documents(DISCOURSE_CLEANED_FILE) + load_markdown_documents(MARKDOWN_DIR)
 
@@ -112,4 +130,5 @@ def create_and_store_knowledge_base():
 
 if __name__ == "__main__":
     create_and_store_knowledge_base()
+
 
